@@ -1,154 +1,409 @@
 
-const canvas = document.getElementById("heartCanvas");
-const ctx = canvas.getContext("2d");
+import * as THREE from "https://cdn.skypack.dev/three@0.135.0";
+import { gsap } from "https://cdn.skypack.dev/gsap@3.8.0";
+import { GLTFLoader } from "https://cdn.skypack.dev/three@0.135.0/examples/jsm/loaders/GLTFLoader";
+class World {
+  constructor({
+    canvas,
+    width,
+    height,
+    cameraPosition,
+    fieldOfView = 75,
+    nearPlane = 0.1,
+    farPlane = 100 }) {
+    this.parameters = {
+      count: 1500,
+      max: 12.5 * Math.PI,
+      a: 2,
+      c: 4.5
+    };
 
-let particles = [];
-let time = 0;
+    this.textureLoader = new THREE.TextureLoader();
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x16000a);
+    this.clock = new THREE.Clock();
+    this.data = 0;
+    this.time = { current: 0, t0: 0, t1: 0, t: 0, frequency: 0.0005 };
+    this.angle = { x: 0, z: 0 };
+    this.width = width || window.innerWidth;
+    this.height = height || window.innerHeight;
+    this.aspectRatio = this.width / this.height;
+    this.fieldOfView = fieldOfView;
+    this.camera = new THREE.PerspectiveCamera(
+      fieldOfView,
+      this.aspectRatio,
+      nearPlane,
+      farPlane);
 
-const count = 1000;
+    this.camera.position.set(
+      cameraPosition.x,
+      cameraPosition.y,
+      cameraPosition.z);
 
-const colorChoices = [
-  "#ff174d",
-  "#ff4d88",
-  "#ffb5d0",
-  "#ff003c",
-  "#ff80ab"
-];
+    this.scene.add(this.camera);
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true
+    });
 
-const parameters = {
-  max: 0.04
-};
+    this.pixelRatio = Math.min(window.devicePixelRatio, 2);
+    this.renderer.setPixelRatio(this.pixelRatio);
+    this.renderer.setSize(this.width, this.height);
+    this.timer = 0;
+    this.addToScene();
+    this.addButton();
 
-// Arrays inspired by your original particle loop
-const randoms = new Float32Array(count);
-const randoms1 = new Float32Array(count);
-const scales = new Float32Array(count);
-const colors = new Float32Array(count * 3);
-const speeds = new Float32Array(count);
+    this.render();
+    this.listenToResize();
+    this.listenToMouseMove();
+  }
+  start() { }
+  render() {
+    this.renderer.render(this.scene, this.camera);
+    this.composer && this.composer.render();
+  }
+  loop() {
+    this.time.elapsed = this.clock.getElapsedTime();
+    this.time.delta = Math.min(
+      60,
+      (this.time.current - this.time.elapsed) * 1000);
 
-function resizeCanvas() {
-  const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
+    if (this.analyser && this.isRunning) {
+      this.time.t = this.time.elapsed - this.time.t0 + this.time.t1;
+      this.data = this.analyser.getAverageFrequency();
+      this.data *= this.data / 2000;
+      this.angle.x += this.time.delta * 0.001 * 0.63;
+      this.angle.z += this.time.delta * 0.001 * 0.39;
+      const justFinished = this.isRunning && !this.sound.isPlaying;
+      if (justFinished) {
+        this.time.t1 = this.time.t;
+        this.audioBtn.disabled = false;
+        this.isRunning = false;
+        const tl = gsap.timeline();
+        this.angle.x = 0;
+        this.angle.z = 0;
+        tl.to(this.camera.position, {
+          x: 0,
+          z: 4.5,
+          duration: 4,
+          ease: "expo.in"
+        });
 
-  canvas.width = Math.round(rect.width * dpr);
-  canvas.height = Math.round(rect.height * dpr);
+        tl.to(this.audioBtn, {
+          opacity: () => 1,
+          duration: 1,
+          ease: "power1.out"
+        });
 
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      } else {
+        this.camera.position.x = Math.sin(this.angle.x) * this.parameters.a;
+        this.camera.position.z = Math.min(
+          Math.max(Math.cos(this.angle.z) * this.parameters.c, 1.75),
+          6.5);
 
-  createParticles();
-}
+      }
+    }
+    this.camera.lookAt(this.scene.position);
+    if (this.heartMaterial) {
+      this.heartMaterial.uniforms.uTime.value +=
+        this.time.delta * this.time.frequency * (1 + this.data * 0.2);
+    }
+    if (this.model) {
+      this.model.rotation.y -= 0.0005 * this.time.delta * (1 + this.data);
+    }
+    if (this.snowMaterial) {
+      this.snowMaterial.uniforms.uTime.value +=
+        this.time.delta * 0.0004 * (1 + this.data);
+    }
+    this.render();
 
-function heartPoint(t, scale) {
-  return {
-    x: 16 * Math.pow(Math.sin(t), 3) * scale,
-    y: -(13 * Math.cos(t)
-      - 5 * Math.cos(2 * t)
-      - 2 * Math.cos(3 * t)
-      - Math.cos(4 * t)) * scale
-  };
-}
+    this.time.current = this.time.elapsed;
+    requestAnimationFrame(this.loop.bind(this));
+  }
+  listenToResize() {
+    window.addEventListener("resize", () => {
+      // Update sizes
+      this.width = window.innerWidth;
+      this.height = window.innerHeight;
 
-function createParticles() {
-  particles = [];
-
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
-
-  const scale = Math.min(w / 38, h / 34) * 0.85;
-  const cx = w / 2;
-  const cy = h / 2 + 5;
-
-  // Corrected version of your original loop
-  for (let i = 0; i < count; i++) {
-    const phi = Math.random() * Math.PI * 2;
-    const i3 = 3 * i;
-
-    randoms[i] = Math.random();
-    randoms1[i] = Math.random();
-
-    scales[i] = Math.random() * 0.35;
-
-    const colorIndex = Math.floor(
-      Math.random() * colorChoices.length
-    );
-
-    const color = colorChoices[colorIndex];
-
-    // Convert hex color into RGB components
-    const r = parseInt(color.slice(1, 3), 16) / 255;
-    const g = parseInt(color.slice(3, 5), 16) / 255;
-    const b = parseInt(color.slice(5, 7), 16) / 255;
-
-    colors[i3 + 0] = r;
-    colors[i3 + 1] = g;
-    colors[i3 + 2] = b;
-
-    speeds[i] = Math.random() * parameters.max;
-
-    const p = heartPoint(phi, scale);
-
-    // Spread particles slightly around the heart outline
-    const spread = 5 + scales[i] * 22;
-    const x = cx + p.x
-      + (Math.random() - 0.5) * spread;
-    const y = cy + p.y
-      + (Math.random() - 0.5) * spread;
-
-    particles.push({
-      x,
-      y,
-      size: 0.5 + randoms[i] * 2.2,
-      phase: randoms1[i] * Math.PI * 2,
-      speed: speeds[i],
-      color,
-      drift: scales[i] * 0.5
+      // Update camera
+      this.camera.aspect = this.width / this.height;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setSize(this.width, this.height);
     });
   }
-}
+  listenToMouseMove() {
+    window.addEventListener("mousemove", e => {
+      const x = e.clientX;
+      const y = e.clientY;
+      gsap.to(this.camera.position, {
+        x: gsap.utils.mapRange(0, window.innerWidth, 0.2, -0.2, x),
+        y: gsap.utils.mapRange(0, window.innerHeight, 0.2, -0.2, -y)
+      });
 
-function animate() {
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
-
-  ctx.clearRect(0, 0, w, h);
-
-  time += 0.03;
-
-  for (const p of particles) {
-    const glow =
-      (Math.sin(time + p.phase) + 1) / 2;
-
-    const driftX =
-      Math.sin(time * 2 + p.phase) * p.drift;
-
-    const driftY =
-      Math.cos(time * 2 + p.phase) * p.drift;
-
-    ctx.globalAlpha = 0.3 + glow * 0.7;
-    ctx.fillStyle = p.color;
-    ctx.shadowColor = p.color;
-    ctx.shadowBlur = 4 + glow * 12;
-
-    ctx.beginPath();
-
-    ctx.arc(
-      p.x + driftX,
-      p.y + driftY,
-      p.size * (0.7 + glow * 0.7),
-      0,
-      Math.PI * 2
-    );
-
-    ctx.fill();
+    });
   }
+  addHeart() {
+    this.heartMaterial = new THREE.ShaderMaterial({
+      fragmentShader: document.getElementById("fragmentShader").textContent,
+      vertexShader: document.getElementById("vertexShader").textContent,
+      uniforms: {
+        uTime: { value: 0 },
+        uSize: { value: 0.2 },
+        uTex: {
+          value: new THREE.TextureLoader().load(
+            "https://assets.codepen.io/74321/heart.png")
+        }
+      },
 
-  ctx.globalAlpha = 1;
-  ctx.shadowBlur = 0;
 
-  requestAnimationFrame(animate);
+
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      transparent: true
+    });
+
+    const count = this.parameters.count; //2000
+    const scales = new Float32Array(count * 1);
+    const colors = new Float32Array(count * 3);
+    const speeds = new Float32Array(count);
+    const randoms = new Float32Array(count);
+    const randoms1 = new Float32Array(count);
+    const colorChoices = [
+      "white",
+      "red",
+      "pink",
+      "crimson",
+      "hotpink",
+      "green"];
+
+
+    const squareGeometry = new THREE.PlaneGeometry(1, 1);
+    this.instancedGeometry = new THREE.InstancedBufferGeometry();
+    Object.keys(squareGeometry.attributes).forEach(attr => {
+      this.instancedGeometry.attributes[attr] = squareGeometry.attributes[attr];
+    });
+    this.instancedGeometry.index = squareGeometry.index;
+    this.instancedGeometry.maxInstancedCount = count;
+
+    for (let i = 0; i < count; i++) {
+      const phi = Math.random() * Math.PI * 2;
+      const i3 = 3 * i;
+      randoms[i] = Math.random();
+      randoms1[i] = Math.random();
+      scales[i] = Math.random() * 0.35;
+      const colorIndex = Math.floor(Math.random() * colorChoices.length);
+      const color = new THREE.Color(colorChoices[colorIndex]);
+      colors[i3 + 0] = color.r;
+      colors[i3 + 1] = color.g;
+      colors[i3 + 2] = color.b;
+      speeds[i] = Math.random() * this.parameters.max;
+    }
+    this.instancedGeometry.setAttribute(
+      "random",
+      new THREE.InstancedBufferAttribute(randoms, 1, false));
+
+    this.instancedGeometry.setAttribute(
+      "random1",
+      new THREE.InstancedBufferAttribute(randoms1, 1, false));
+
+    this.instancedGeometry.setAttribute(
+      "aScale",
+      new THREE.InstancedBufferAttribute(scales, 1, false));
+
+    this.instancedGeometry.setAttribute(
+      "aSpeed",
+      new THREE.InstancedBufferAttribute(speeds, 1, false));
+
+    this.instancedGeometry.setAttribute(
+      "aColor",
+      new THREE.InstancedBufferAttribute(colors, 3, false));
+
+    this.heart = new THREE.Mesh(this.instancedGeometry, this.heartMaterial);
+    console.log(this.heart);
+    this.scene.add(this.heart);
+  }
+  addToScene() {
+    this.addModel();
+    this.addHeart();
+    this.addSnow();
+  }
+  async addModel() {
+    this.model = await this.loadObj(
+      "https://assets.codepen.io/74321/heart.glb");
+
+    this.model.scale.set(0.01, 0.01, 0.01);
+    this.model.material = new THREE.MeshMatcapMaterial({
+      matcap: this.textureLoader.load(
+        "https://assets.codepen.io/74321/3.png",
+        () => {
+          gsap.to(this.model.scale, {
+            x: 0.35,
+            y: 0.35,
+            z: 0.35,
+            duration: 1.5,
+            ease: "Elastic.easeOut"
+          });
+
+        }),
+
+      color: "#ff89aC"
+    });
+
+    this.scene.add(this.model);
+  }
+  addButton() {
+    this.audioBtn = document.querySelector("button");
+    this.audioBtn.addEventListener("click", () => {
+      this.audioBtn.disabled = true;
+      if (this.analyser) {
+        this.sound.play();
+        this.time.t0 = this.time.elapsed;
+        this.data = 0;
+        this.isRunning = true;
+        gsap.to(this.audioBtn, {
+          opacity: 0,
+          duration: 1,
+          ease: "power1.out"
+        });
+
+      } else {
+        this.loadMusic().then(() => {
+          console.log("music loaded");
+        });
+      }
+    });
+  }
+  loadObj(path) {
+    const loader = new GLTFLoader();
+    return new Promise(resolve => {
+      loader.load(
+        path,
+        response => {
+          resolve(response.scene.children[0]);
+        },
+        xhr => { },
+        err => {
+          console.log(err);
+        });
+
+    });
+  }
+  loadMusic() {
+    return new Promise(resolve => {
+      const listener = new THREE.AudioListener();
+      this.camera.add(listener);
+      // create a global audio source
+      this.sound = new THREE.Audio(listener);
+      const audioLoader = new THREE.AudioLoader();
+      audioLoader.load(
+        "https://assets.codepen.io/74321/ukulele.mp3",
+        buffer => {
+          this.sound.setBuffer(buffer);
+          this.sound.setLoop(false);
+          this.sound.setVolume(0.5);
+          this.sound.play();
+          this.analyser = new THREE.AudioAnalyser(this.sound, 32);
+          // get the average frequency of the sound
+          const data = this.analyser.getAverageFrequency();
+          this.isRunning = true;
+          this.t0 = this.time.elapsed;
+          resolve(data);
+        },
+        progress => {
+          gsap.to(this.audioBtn, {
+            opacity: () => 1 - progress.loaded / progress.total,
+            duration: 1,
+            ease: "power1.out"
+          });
+
+        },
+
+        error => {
+          console.log(error);
+        });
+
+    });
+  }
+  addSnow() {
+    this.snowMaterial = new THREE.ShaderMaterial({
+      fragmentShader: document.getElementById("fragmentShader1").textContent,
+      vertexShader: document.getElementById("vertexShader1").textContent,
+      uniforms: {
+        uTime: { value: 0 },
+        uSize: { value: 0.3 },
+        uTex: {
+          value: new THREE.TextureLoader().load(
+            "https://assets.codepen.io/74321/heart.png")
+        }
+      },
+
+
+
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      transparent: true
+    });
+
+    const count = 550;
+    const scales = new Float32Array(count * 1);
+    const colors = new Float32Array(count * 3);
+    const phis = new Float32Array(count);
+    const randoms = new Float32Array(count);
+    const randoms1 = new Float32Array(count);
+    const colorChoices = ["red", "pink", "hotpink", "green"];
+
+    const squareGeometry = new THREE.PlaneGeometry(1, 1);
+    this.instancedGeometry = new THREE.InstancedBufferGeometry();
+    Object.keys(squareGeometry.attributes).forEach(attr => {
+      this.instancedGeometry.attributes[attr] = squareGeometry.attributes[attr];
+    });
+    this.instancedGeometry.index = squareGeometry.index;
+    this.instancedGeometry.maxInstancedCount = count;
+
+    for (let i = 0; i < count; i++) {
+      const phi = (Math.random() - 0.5) * 10;
+      const i3 = 3 * i;
+      phis[i] = phi;
+      randoms[i] = Math.random();
+      randoms1[i] = Math.random();
+      scales[i] = Math.random() * 0.35;
+      const colorIndex = Math.floor(Math.random() * colorChoices.length);
+      const color = new THREE.Color(colorChoices[colorIndex]);
+      colors[i3 + 0] = color.r;
+      colors[i3 + 1] = color.g;
+      colors[i3 + 2] = color.b;
+    }
+    this.instancedGeometry.setAttribute(
+      "phi",
+      new THREE.InstancedBufferAttribute(phis, 1, false));
+
+    this.instancedGeometry.setAttribute(
+      "random",
+      new THREE.InstancedBufferAttribute(randoms, 1, false));
+
+    this.instancedGeometry.setAttribute(
+      "random1",
+      new THREE.InstancedBufferAttribute(randoms1, 1, false));
+
+    this.instancedGeometry.setAttribute(
+      "aScale",
+      new THREE.InstancedBufferAttribute(scales, 1, false));
+
+    this.instancedGeometry.setAttribute(
+      "aColor",
+      new THREE.InstancedBufferAttribute(colors, 3, false));
+
+    this.snow = new THREE.Mesh(this.instancedGeometry, this.snowMaterial);
+    this.scene.add(this.snow);
+  }
 }
 
-window.addEventListener("resize", resizeCanvas);
 
-resizeCanvas();
-animate();
+const world = new World({
+  canvas: document.querySelector("canvas.webgl"),
+  cameraPosition: { x: 0, y: 0, z: 4.5 }
+});
+
+
+world.loop();
