@@ -13,22 +13,23 @@ body {
   min-height: 100vh;
 }
 
+main {
+  padding: 20px 12px;
+}
+
 h1 {
   background: #202027;
-  padding: 35px 10px;
+  padding: 30px 10px;
   font-size: clamp(25px, 5vw, 38px);
   font-style: italic;
   font-weight: 500;
-}
-
-main {
-  padding: 25px 12px;
+  border-radius: 10px;
 }
 
 .message {
   color: #ffdce8;
-  font-size: 15px;
-  margin: 15px 0;
+  font-size: 17px;
+  margin: 20px 0;
 }
 
 #heartCanvas {
@@ -46,4 +47,14 @@ main {
   font-size: 18px;
   color: #ff9fc4;
   line-height: 1.6;
+}
+
+@media (max-width: 480px) {
+  #heartCanvas {
+    height: 300px;
+  }
+
+  main {
+    padding: 15px 8px;
+  }
 }
